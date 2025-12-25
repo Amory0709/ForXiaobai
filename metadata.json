@@ -1,0 +1,7 @@
+{
+  "name": "Shiny 3D Christmas Tree",
+  "description": "A beautiful, interactive 3D Christmas tree with sparkling lights and falling snow.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
