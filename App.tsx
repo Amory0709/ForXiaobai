@@ -8,7 +8,7 @@ import { HandProvider, useHandTracking } from './components/HandContext';
 const InnerApp = () => {
   const [config, setConfig] = useState<TreeConfig>(INITIAL_CONFIG);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const { videoRef, startCamera, isTracking, isInitializing } = useHandTracking();
+  const { videoRef, canvasRef, startCamera, isTracking, isInitializing } = useHandTracking();
 
   useEffect(() => {
       // Auto-start camera after initialization
@@ -38,7 +38,7 @@ const InnerApp = () => {
         <div className="bg-white/5 backdrop-blur-md p-5 rounded-2xl border border-white/10 pointer-events-auto shadow-2xl shadow-pink-900/20">
              <h1 className="text-2xl font-bold bg-gradient-to-r from-pink-200 via-rose-300 to-amber-200 bg-clip-text text-transparent flex items-center gap-2">
                 <Gift className="text-pink-300" />
-                <span className="tracking-wide">Winter Elegance</span>
+                <span className="tracking-wide">For Winnie</span>
              </h1>
              <p className="text-xs text-pink-100/70 mt-1 uppercase tracking-widest font-light">3D Interactive Experience</p>
         </div>
@@ -46,19 +46,27 @@ const InnerApp = () => {
 
       {/* Webcam Preview (Bottom Left) */}
       <div className="absolute bottom-6 left-6 z-20 flex flex-col gap-2 pointer-events-auto">
-         <div className="relative w-32 h-24 bg-black/40 rounded-xl overflow-hidden border border-white/20 shadow-lg">
-             <video 
-                ref={videoRef} 
-                autoPlay 
-                playsInline 
-                muted
-                className="w-full h-full object-cover transform -scale-x-100 opacity-80 hover:opacity-100 transition-opacity" 
-             />
-             <div className="absolute top-1 right-1 bg-black/50 p-1 rounded-full">
+         <div className="relative w-36 h-28 bg-black/40 rounded-xl overflow-hidden border border-white/20 shadow-lg">
+             {/* Container for Video + Canvas Overlay */}
+             <div className="relative w-full h-full transform -scale-x-100">
+                 <video 
+                    ref={videoRef} 
+                    autoPlay 
+                    playsInline 
+                    muted
+                    className="absolute inset-0 w-full h-full object-cover opacity-80" 
+                 />
+                 <canvas
+                    ref={canvasRef}
+                    className="absolute inset-0 w-full h-full object-cover"
+                 />
+             </div>
+
+             <div className="absolute top-1 right-1 bg-black/50 p-1 rounded-full z-10">
                  <Camera className={`w-3 h-3 ${isTracking ? 'text-green-400' : 'text-white/50'}`} />
              </div>
              {isInitializing && (
-                 <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-[10px] text-white/70">
+                 <div className="absolute inset-0 flex items-center justify-center bg-black/60 text-[10px] text-white/70 z-20">
                      Loading AI...
                  </div>
              )}

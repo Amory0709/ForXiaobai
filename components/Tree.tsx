@@ -52,14 +52,18 @@ const GlassGiftBox = ({ position, rotation, scale, color, ribbonColor = "#ffffff
   );
 };
 
-const ParticleTreeLayer = ({ scale, position, color }: { scale: number; position: [number, number, number]; color: string }) => {
-  const count = 1500; // Dense elegance
+const ExplodingTreeLayer = ({ scale, position, color }: { scale: number; position: [number, number, number]; color: string }) => {
+  const count = 1500; 
+  const { gestureRef, isTracking } = useHandTracking();
   
-  const points = useMemo(() => {
+  // Store initial "Tree" positions and current dynamic positions
+  const { initialPositions, randomDirections, sizes } = useMemo(() => {
     const p = new Float32Array(count * 3);
-    const sizes = new Float32Array(count);
+    const dir = new Float32Array(count * 3);
+    const s = new Float32Array(count);
     
     for (let i = 0; i < count; i++) {
+        // Tree Shape Logic
         const coneHeight = scale * 1.5;
         const h = Math.random() * coneHeight; 
         const maxR = scale * (1 - h / coneHeight);
@@ -75,31 +79,86 @@ const ParticleTreeLayer = ({ scale, position, color }: { scale: number; position
         p[i * 3 + 1] = y;
         p[i * 3 + 2] = z;
 
-        sizes[i] = Math.random();
+        // Explosion Direction (Normalized vector away from center + noise)
+        const dist = Math.sqrt(x*x + y*y + z*z) + 0.1;
+        dir[i * 3] = (x / dist) * (1 + Math.random());
+        dir[i * 3 + 1] = (y / dist) * (1 + Math.random()) + (Math.random() - 0.5); // Add some vertical chaos
+        dir[i * 3 + 2] = (z / dist) * (1 + Math.random());
+
+        s[i] = Math.random();
     }
-    return { positions: p, sizes };
+    return { initialPositions: p, randomDirections: dir, sizes: s };
   }, [count, scale]);
 
-  const materialRef = useRef<THREE.PointsMaterial>(null);
+  const pointsRef = useRef<THREE.Points>(null);
+  
+  // Create a working array for current positions to avoid re-creating Float32Array every frame
+  const currentPositions = useMemo(() => new Float32Array(initialPositions), [initialPositions]);
 
   useFrame((state) => {
-     if (materialRef.current) {
-         // Gentle twinkling
-         materialRef.current.size = 0.06 + Math.sin(state.clock.elapsedTime * 1.5) * 0.015;
+     if (!pointsRef.current) return;
+     
+     // Check Gesture
+     // Open = Explode
+     // Closed (or none) = Gather
+     const isExploding = isTracking && gestureRef.current === 'open';
+
+     const positions = pointsRef.current.geometry.attributes.position.array as Float32Array;
+     
+     for(let i = 0; i < count; i++) {
+         const idx = i * 3;
+         
+         let tx, ty, tz;
+
+         if (isExploding) {
+             // Target is far away based on random direction
+             // Expansion factor
+             const expansion = 8.0; 
+             tx = initialPositions[idx] + randomDirections[idx] * expansion;
+             ty = initialPositions[idx+1] + randomDirections[idx+1] * expansion;
+             tz = initialPositions[idx+2] + randomDirections[idx+2] * expansion;
+             
+             // Move fast towards explosion (Increased speed from 0.05 to 0.15)
+             positions[idx] += (tx - positions[idx]) * 0.15;
+             positions[idx+1] += (ty - positions[idx+1]) * 0.15;
+             positions[idx+2] += (tz - positions[idx+2]) * 0.15;
+         } else {
+             // Target is original tree position
+             tx = initialPositions[idx];
+             ty = initialPositions[idx+1];
+             tz = initialPositions[idx+2];
+
+             // Move smoothly back to tree shape (Increased speed from 0.1 to 0.25)
+             // Using a spring-like ease
+             positions[idx] += (tx - positions[idx]) * 0.25;
+             positions[idx+1] += (ty - positions[idx+1]) * 0.25;
+             positions[idx+2] += (tz - positions[idx+2]) * 0.25;
+         }
      }
+     
+     pointsRef.current.geometry.attributes.position.needsUpdate = true;
+
+     // Twinkle effect
+     const material = pointsRef.current.material as THREE.PointsMaterial;
+     material.size = 0.06 + Math.sin(state.clock.elapsedTime * 2) * 0.02;
   });
 
   return (
-    <points position={position}>
+    <points ref={pointsRef} position={position}>
       <bufferGeometry>
-        <bufferAttribute attach="attributes-position" count={points.positions.length / 3} array={points.positions} itemSize={3} />
+        <bufferAttribute 
+            attach="attributes-position" 
+            count={count} 
+            array={currentPositions} 
+            itemSize={3} 
+            usage={THREE.DynamicDrawUsage}
+        />
       </bufferGeometry>
       <pointsMaterial 
-        ref={materialRef}
         size={0.06} 
         color={color} 
         transparent 
-        opacity={0.6} 
+        opacity={0.8} 
         blending={THREE.AdditiveBlending} 
         depthWrite={false} 
         sizeAttenuation={true}
@@ -179,16 +238,19 @@ const InteractiveParticles = ({ count = 100, color }: { count: number; color: st
   const mesh = useRef<THREE.InstancedMesh>(null);
   const trailMesh = useRef<THREE.InstancedMesh>(null);
   const { viewport } = useThree();
-  const { handPosition, isTracking } = useHandTracking();
+  const { handPositionRef, gestureRef, isTracking } = useHandTracking();
   
-  // 1. Ambient Floating Particles that react to mouse/hand
+  // 1. Ambient Floating Particles
   const particles = useMemo(() => {
     return new Array(count).fill(0).map(() => ({
       x: (Math.random() - 0.5) * 15,
       y: (Math.random() - 0.5) * 15,
       z: (Math.random() - 0.5) * 10,
       vx: 0, vy: 0, vz: 0,
-      s: Math.random() * 0.5 + 0.5
+      s: Math.random() * 0.5 + 0.5,
+      originalX: (Math.random() - 0.5) * 15, // Remember roughly where they belong
+      originalY: (Math.random() - 0.5) * 15,
+      originalZ: (Math.random() - 0.5) * 10,
     }));
   }, [count]);
 
@@ -213,18 +275,17 @@ const InteractiveParticles = ({ count = 100, color }: { count: number; color: st
      let xTarget = 0;
      let yTarget = 0;
      const zTarget = 2;
+     
+     const isExploding = isTracking && gestureRef.current === 'open';
 
      // --- Determine Target Position (Hand or Mouse) ---
-     if (isTracking && handPosition) {
-         // Map Hand (0..1) to Viewport
-         // Mirror X: 1-x because webcam is mirrored
-         // Flip Y: 1-y because MediaPipe Y is top-down
-         const ndcX = (1 - handPosition.x) * 2 - 1; 
-         const ndcY = -(handPosition.y * 2 - 1);
+     const handPos = handPositionRef.current;
+     if (isTracking && handPos) {
+         const ndcX = (1 - handPos.x) * 2 - 1; 
+         const ndcY = -(handPos.y * 2 - 1);
          xTarget = (ndcX * viewport.width) / 2;
          yTarget = (ndcY * viewport.height) / 2;
      } else {
-         // Mouse Fallback
          xTarget = (state.pointer.x * viewport.width) / 2;
          yTarget = (state.pointer.y * viewport.height) / 2;
      }
@@ -234,7 +295,6 @@ const InteractiveParticles = ({ count = 100, color }: { count: number; color: st
      const dyTarget = yTarget - lastTargetPos.current.y;
      const distTarget = Math.sqrt(dxTarget*dxTarget + dyTarget*dyTarget);
      
-     // Emit if moved enough
      if (distTarget > 0.1) {
          const idx = currentTrailIdx.current;
          trailData[idx].active = true;
@@ -242,30 +302,40 @@ const InteractiveParticles = ({ count = 100, color }: { count: number; color: st
          trailData[idx].x = xTarget;
          trailData[idx].y = yTarget;
          trailData[idx].z = zTarget;
-         // Add some random velocity scatter
          trailData[idx].vx = (Math.random() - 0.5) * 0.1;
          trailData[idx].vy = (Math.random() - 0.5) * 0.1;
          trailData[idx].vz = (Math.random() - 0.5) * 0.1;
-         
          currentTrailIdx.current = (currentTrailIdx.current + 1) % trailCount;
          lastTargetPos.current = { x: xTarget, y: yTarget };
      }
 
      // --- Update Ambient Particles ---
      particles.forEach((p, i) => {
-        const dx = xTarget - p.x;
-        const dy = yTarget - p.y;
-        const dz = zTarget - p.z;
-        const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-        
-        // Attraction force
-        const force = Math.max(0, (6 - dist) / 6); 
-        
-        if (force > 0) {
-            // Pull towards target
-            p.vx += dx * 0.03 * force;
-            p.vy += dy * 0.03 * force;
-            p.vz += dz * 0.03 * force;
+        let dx, dy, dz;
+
+        if (isExploding) {
+             // Explosive force outwards from center (0,0,0)
+             dx = p.x; 
+             dy = p.y;
+             dz = p.z;
+             const distToCenter = Math.sqrt(dx*dx + dy*dy + dz*dz) + 0.1;
+             
+             // Push away
+             p.vx += (dx / distToCenter) * 0.05;
+             p.vy += (dy / distToCenter) * 0.05;
+             p.vz += (dz / distToCenter) * 0.05;
+        } else {
+             // Normal Behavior: Attracted to Hand/Mouse
+             dx = xTarget - p.x;
+             dy = yTarget - p.y;
+             dz = zTarget - p.z;
+             const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+             const force = Math.max(0, (6 - dist) / 6); 
+             if (force > 0) {
+                p.vx += dx * 0.03 * force;
+                p.vy += dy * 0.03 * force;
+                p.vz += dz * 0.03 * force;
+             }
         }
 
         // Noise / Swirl
@@ -283,13 +353,12 @@ const InteractiveParticles = ({ count = 100, color }: { count: number; color: st
         p.z += p.vz;
         
         // Soft bounds
-        if (Math.abs(p.x) > 10) p.vx -= p.x * 0.01;
-        if (Math.abs(p.y) > 10) p.vy -= p.y * 0.01;
-        if (Math.abs(p.z) > 8) p.vz -= p.z * 0.01;
+        if (Math.abs(p.x) > 15) p.vx -= p.x * 0.01;
+        if (Math.abs(p.y) > 15) p.vy -= p.y * 0.01;
+        if (Math.abs(p.z) > 10) p.vz -= p.z * 0.01;
 
         dummy.position.set(p.x, p.y, p.z);
-        // Scale up when fast/near
-        const scale = p.s * (0.5 + force * 1.5); 
+        const scale = p.s * (isExploding ? 2.0 : 0.5 + Math.random()); 
         dummy.scale.setScalar(scale);
         dummy.rotation.set(state.clock.elapsedTime + i, state.clock.elapsedTime + i, 0);
         dummy.updateMatrix();
@@ -302,16 +371,16 @@ const InteractiveParticles = ({ count = 100, color }: { count: number; color: st
          if (!p.active) {
              dummy.scale.setScalar(0);
          } else {
-             p.life -= 0.02; // Fade out
+             p.life -= 0.02;
              if (p.life <= 0) p.active = false;
              
              p.x += p.vx;
              p.y += p.vy;
              p.z += p.vz;
-             p.y -= 0.02; // Gravity
+             p.y -= 0.02;
 
              dummy.position.set(p.x, p.y, p.z);
-             dummy.scale.setScalar(p.life * 0.8); // Shrink over life
+             dummy.scale.setScalar(p.life * 0.8);
              dummy.rotation.set(p.life * 5, p.life * 5, 0);
          }
          dummy.updateMatrix();
@@ -322,12 +391,10 @@ const InteractiveParticles = ({ count = 100, color }: { count: number; color: st
 
   return (
     <group>
-        {/* Ambient Interactive Dust */}
         <instancedMesh ref={mesh} args={[undefined, undefined, count]}>
             <dodecahedronGeometry args={[0.2, 0]} />
             <meshBasicMaterial color={color} transparent opacity={0.6} blending={THREE.AdditiveBlending} />
         </instancedMesh>
-        {/* Hand/Mouse Trail */}
         <instancedMesh ref={trailMesh} args={[undefined, undefined, trailCount]}>
             <octahedronGeometry args={[0.3, 0]} />
             <meshBasicMaterial color="#ffffff" transparent opacity={0.8} blending={THREE.AdditiveBlending} />
@@ -359,13 +426,13 @@ export const Tree = ({ colors, rotationSpeed }: TreeProps) => {
             <meshBasicMaterial color={colors.leaf} transparent opacity={0.3} blending={THREE.AdditiveBlending} />
         </mesh>
 
-        {/* Particle Tree Layers */}
-        <ParticleTreeLayer position={[0, -1.0, 0]} scale={2.8} color={colors.leaf} />
-        <ParticleTreeLayer position={[0, 0.2, 0]} scale={2.4} color={colors.leaf} />
-        <ParticleTreeLayer position={[0, 1.4, 0]} scale={2.0} color={colors.leaf} />
-        <ParticleTreeLayer position={[0, 2.5, 0]} scale={1.5} color={colors.leaf} />
-        <ParticleTreeLayer position={[0, 3.4, 0]} scale={1.0} color={colors.leaf} />
-        <ParticleTreeLayer position={[0, 4.0, 0]} scale={0.6} color={colors.leaf} />
+        {/* Dynamic Exploding Tree Layers - Replaced ParticleTreeLayer */}
+        <ExplodingTreeLayer position={[0, -1.0, 0]} scale={2.8} color={colors.leaf} />
+        <ExplodingTreeLayer position={[0, 0.2, 0]} scale={2.4} color={colors.leaf} />
+        <ExplodingTreeLayer position={[0, 1.4, 0]} scale={2.0} color={colors.leaf} />
+        <ExplodingTreeLayer position={[0, 2.5, 0]} scale={1.5} color={colors.leaf} />
+        <ExplodingTreeLayer position={[0, 3.4, 0]} scale={1.0} color={colors.leaf} />
+        <ExplodingTreeLayer position={[0, 4.0, 0]} scale={0.6} color={colors.leaf} />
 
         {/* Garland */}
         <GlowingGarland />
@@ -390,7 +457,7 @@ export const Tree = ({ colors, rotationSpeed }: TreeProps) => {
            </group>
         ))}
 
-        {/* Top Star - Diamond / Crystal Look */}
+        {/* Top Star */}
         <Float speed={3} rotationIntensity={0.5} floatIntensity={0.5}>
           <group position={[0, 4.8, 0]}>
             <mesh castShadow>
@@ -401,7 +468,7 @@ export const Tree = ({ colors, rotationSpeed }: TreeProps) => {
                 roughness={0} 
                 metalness={0.1} 
                 thickness={2}
-                ior={2.4} // Diamond
+                ior={2.4} 
                 clearcoat={1}
               />
             </mesh>
@@ -416,16 +483,13 @@ export const Tree = ({ colors, rotationSpeed }: TreeProps) => {
 
       </group>
       
-      {/* Floor Reflections */}
       <mesh rotation={[-Math.PI/2, 0, 0]} position={[0, -2.5, 0]}>
           <circleGeometry args={[5, 32]} />
           <meshBasicMaterial color={colors.leaf} transparent opacity={0.05} blending={THREE.AdditiveBlending} />
       </mesh>
 
-      {/* Floating Magic Dust - NOW INTERACTIVE */}
       <InteractiveParticles count={250} color={colors.light} />
       
-      {/* Background Ambience */}
       <Sparkles 
         count={100} 
         scale={[10, 10, 10]} 
