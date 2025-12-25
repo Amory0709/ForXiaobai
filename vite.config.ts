@@ -2,12 +2,16 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 // https://vitejs.dev/config/
-export default defineConfig({
-  plugins: [react()],
-  // ⚠️ 注意：这里的 '/christmas-tree/' 必须和你 GitHub 上的仓库名一致
-  // 如果你的仓库叫 'my-project'，这里就改成 '/my-project/'
-  base: '/christmas-tree/', 
-  build: {
-    outDir: 'dist',
-  },
+export default defineConfig(({ command }) => {
+  const isDev = command === 'serve';
+  
+  return {
+    plugins: [react()],
+    // 修复：本地开发(dev)时使用根路径 '/'，只有打包(build)时才使用子路径 '/christmas-tree/'
+    // 这样你就不会因为路径不对而看到白屏了
+    base: isDev ? '/' : '/christmas-tree/', 
+    build: {
+      outDir: 'dist',
+    },
+  };
 });

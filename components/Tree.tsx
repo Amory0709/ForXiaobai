@@ -1,5 +1,5 @@
-import React, { useMemo, useRef, useState, useEffect } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import React, { Component, useMemo, useRef, useState, useEffect, Suspense } from 'react';
+import { useFrame, useThree, useLoader } from '@react-three/fiber';
 import { Float, Sparkles, Instance, Instances } from '@react-three/drei';
 import * as THREE from 'three';
 import { useHandTracking } from './HandContext';
@@ -11,6 +11,132 @@ interface TreeProps {
   };
   rotationSpeed: number;
 }
+
+interface ErrorBoundaryProps {
+  fallback: React.ReactNode;
+  children?: React.ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+}
+
+// Simple Error Boundary to catch texture loading errors without crashing the whole app
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true };
+  }
+  
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("ErrorBoundary caught an error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+    return this.props.children;
+  }
+}
+
+// --- Placeholder Component (Shows when image is missing) ---
+const PhotoPlaceholder = ({ position, rotation }: any) => {
+  return (
+    <group position={position} rotation={rotation}>
+       <Float speed={2} rotationIntensity={0.1} floatIntensity={0.5} floatingRange={[-0.1, 0.1]}>
+        {/* Frame - Adjusted to 3:4 Ratio (approx) */}
+        <mesh castShadow receiveShadow>
+            <boxGeometry args={[1.5, 2.0, 0.05]} />
+            <meshStandardMaterial color="#fff0f5" roughness={0.4} metalness={0.1} />
+        </mesh>
+        
+        {/* The Pink Background */}
+        <mesh position={[0, 0.1, 0.03]}>
+            <planeGeometry args={[1.2, 1.6]} /> 
+            <meshBasicMaterial color="#ffdae9" />
+        </mesh>
+
+        {/* Question Mark Symbol */}
+         <group position={[0, 0.2, 0.04]}>
+            {/* Curve */}
+            <mesh position={[0, 0.25, 0]} rotation={[0,0,0]}>
+                <torusGeometry args={[0.2, 0.05, 16, 32, Math.PI]} />
+                <meshStandardMaterial color="#ff69b4" />
+            </mesh>
+            {/* Vertical Line */}
+             <mesh position={[0.2, 0.15, 0]}>
+                <boxGeometry args={[0.05, 0.2, 0.02]} />
+                <meshStandardMaterial color="#ff69b4" />
+            </mesh>
+             <mesh position={[0, -0.1, 0]}>
+                <boxGeometry args={[0.05, 0.2, 0.02]} />
+                <meshStandardMaterial color="#ff69b4" />
+            </mesh>
+            {/* Dot */}
+            <mesh position={[0, -0.4, 0]}>
+                <sphereGeometry args={[0.08]} />
+                <meshStandardMaterial color="#ff69b4" />
+            </mesh>
+         </group>
+
+         {/* Text hint */}
+         <mesh position={[0, 0.95, 0.04]} rotation={[0, 0, 0.05]}>
+             <boxGeometry args={[0.3, 0.08, 0.02]} />
+             <meshStandardMaterial color="#ffd700" metalness={0.8} roughness={0.2} />
+        </mesh>
+      </Float>
+    </group>
+  );
+}
+
+// --- Photo Component ---
+const PhotoFrame = ({ url, position = [2, 2, 0], rotation = [0, -0.5, 0] }: any) => {
+  // Use a fallback URL if no local image is found to prevent crash.
+  // Note: We use a try/catch style logic by relying on the ErrorBoundary above this component.
+  const texture = useLoader(THREE.TextureLoader, url);
+
+  return (
+    <group position={position} rotation={rotation}>
+      <Float speed={2} rotationIntensity={0.1} floatIntensity={0.5} floatingRange={[-0.1, 0.1]}>
+        {/* Frame - Resized for Portrait Photo (Tagi) */}
+        <mesh castShadow receiveShadow>
+            <boxGeometry args={[1.5, 2.0, 0.05]} />
+            <meshStandardMaterial color="#fff0f5" roughness={0.4} metalness={0.1} />
+        </mesh>
+        
+        {/* The Photo - Resized to 1.2 x 1.6 (3:4 Ratio) */}
+        <mesh position={[0, 0.1, 0.03]}>
+            <planeGeometry args={[1.2, 1.6]} /> 
+            <meshBasicMaterial map={texture} toneMapped={false} />
+        </mesh>
+
+        {/* Shine/Glass reflection hint */}
+        <mesh position={[0, 0.1, 0.035]}>
+             <planeGeometry args={[1.2, 1.6]} />
+             <meshPhysicalMaterial 
+                color="white" 
+                transmission={0.9} 
+                opacity={0.3} 
+                roughness={0} 
+                clearcoat={1} 
+                transparent 
+             />
+        </mesh>
+        
+        {/* Decorative Tape/Clip */}
+        <mesh position={[0, 0.95, 0.04]} rotation={[0, 0, 0.05]}>
+             <boxGeometry args={[0.3, 0.08, 0.02]} />
+             <meshStandardMaterial color="#ffd700" metalness={0.8} roughness={0.2} />
+        </mesh>
+      </Float>
+    </group>
+  );
+};
 
 // --- Geometry Components ---
 
@@ -409,6 +535,14 @@ export const Tree = ({ colors, rotationSpeed }: TreeProps) => {
   const groupRef = useRef<THREE.Group>(null);
   const decorations = useDecorations(65);
 
+  // Construct safe path for the image
+  // This handles cases where import.meta.env might not be fully populated in all environments
+  const meta = import.meta as any;
+  const baseUrl = (meta.env && meta.env.BASE_URL) ? meta.env.BASE_URL : '/';
+  // Ensure we don't end up with // if base is just /
+  const cleanBase = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+  const photoUrl = `${cleanBase}tagi.jpg`;
+
   useFrame((state, delta) => {
     if (groupRef.current) {
       groupRef.current.rotation.y += delta * rotationSpeed;
@@ -426,7 +560,7 @@ export const Tree = ({ colors, rotationSpeed }: TreeProps) => {
             <meshBasicMaterial color={colors.leaf} transparent opacity={0.3} blending={THREE.AdditiveBlending} />
         </mesh>
 
-        {/* Dynamic Exploding Tree Layers - Replaced ParticleTreeLayer */}
+        {/* Dynamic Exploding Tree Layers */}
         <ExplodingTreeLayer position={[0, -1.0, 0]} scale={2.8} color={colors.leaf} />
         <ExplodingTreeLayer position={[0, 0.2, 0]} scale={2.4} color={colors.leaf} />
         <ExplodingTreeLayer position={[0, 1.4, 0]} scale={2.0} color={colors.leaf} />
@@ -487,6 +621,17 @@ export const Tree = ({ colors, rotationSpeed }: TreeProps) => {
           <circleGeometry args={[5, 32]} />
           <meshBasicMaterial color={colors.leaf} transparent opacity={0.05} blending={THREE.AdditiveBlending} />
       </mesh>
+
+      {/* Floating Photo Frame - Using Safe Absolute Path */}
+      <ErrorBoundary fallback={<PhotoPlaceholder position={[2.2, 2.5, 1.8]} rotation={[0, -0.6, 0]} />}>
+          <Suspense fallback={<PhotoPlaceholder position={[2.2, 2.5, 1.8]} rotation={[0, -0.6, 0]} />}>
+             <PhotoFrame 
+                url={photoUrl} 
+                position={[2.2, 2.5, 1.8]} 
+                rotation={[0, -0.6, 0]} 
+            />
+          </Suspense>
+      </ErrorBoundary>
 
       <InteractiveParticles count={250} color={colors.light} />
       

@@ -183,15 +183,22 @@ export const HandProvider: React.FC<{ children: React.ReactNode }> = ({ children
           frameRate: { ideal: 30 }
         } 
       });
-      videoRef.current.srcObject = stream;
-      videoRef.current.addEventListener('loadeddata', () => {
-         // Resize canvas to match video
-         if (canvasRef.current && videoRef.current) {
-             canvasRef.current.width = videoRef.current.videoWidth;
-             canvasRef.current.height = videoRef.current.videoHeight;
-         }
-         predictWebcam();
-      });
+      
+      // Secondary check: Ensure video ref is still attached after async call
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.addEventListener('loadeddata', () => {
+           // Resize canvas to match video
+           if (canvasRef.current && videoRef.current) {
+               canvasRef.current.width = videoRef.current.videoWidth;
+               canvasRef.current.height = videoRef.current.videoHeight;
+           }
+           predictWebcam();
+        });
+      } else {
+        // If the component unmounted or ref changed, stop the stream immediately
+        stream.getTracks().forEach(track => track.stop());
+      }
     } catch (err) {
       console.error("Error detecting camera:", err);
     }
